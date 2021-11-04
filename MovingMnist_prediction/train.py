@@ -23,13 +23,16 @@ parser.add_argument('--root', type=str, default='./')
 parser.add_argument('--batch_size', type=int, default=16, help='batch_size')
 parser.add_argument('--nepochs', type=int, default=20, help='nb of epochs')
 parser.add_argument('--print_every', type=int, default=1, help='')
-parser.add_argument('--eval_every', type=int, default=10, help='')
+parser.add_argument('--eval_every', type=int, default=1, help='')
 parser.add_argument('--save_name', type=str, default='phydnet', help='')
 args = parser.parse_args()
 
 
 mm = MovingMNIST(root=args.root, is_train=True, n_frames_input=10, n_frames_output=10, num_objects=[2])
 train_loader = torch.utils.data.DataLoader(dataset=mm, batch_size=args.batch_size, shuffle=True, num_workers=0)
+mm = MovingMNIST(root=args.root, is_train=True, n_frames_input=10, n_frames_output=10, num_objects=[2])
+validation_loader = torch.utils.data.DataLoader(dataset=mm, batch_size=args.batch_size, shuffle=True, num_workers=0)
+
 
 
 
@@ -61,16 +64,18 @@ def train_on_batch(input_tensor, target_tensor, encoder, encoder_optimizer, crit
             decoder_input = target # Teacher forcing    
         else:
             decoder_input = output_image
-
+    newloss = 0
     # Moment regularization  # encoder.phycell.cell_list[0].F.conv1.weight # size (nb_filters,in_channels,7,7)
     k2m = K2M([7,7]).to(device)
     for b in range(0,encoder.phycell.cell_list[0].input_dim):
         filters = encoder.phycell.cell_list[0].F.conv1.weight[:,b,:,:] # (nb_filters,7,7)     
         m = k2m(filters.double()) 
         m  = m.float()   
-        loss += criterion(m, constraints) # constrains is a precomputed matrix   
+        newloss += criterion(m, constraints) # constrains is a precomputed matrix
+    loss = loss + newloss
     loss.backward()
     encoder_optimizer.step()
+    loss = loss - newloss
     return loss.item() / target_length
 
 
@@ -92,15 +97,18 @@ def trainIters(encoder, nepochs, print_every=10,eval_every=10,name=''):
             target_tensor = out[2].to(device)
             loss = train_on_batch(input_tensor, target_tensor, encoder, encoder_optimizer, criterion, teacher_forcing_ratio)                                   
             loss_epoch += loss
-                      
+
+        loss_epoch = loss_epoch / len(train_loader)
+
         train_losses.append(loss_epoch)        
         if (epoch+1) % print_every == 0:
             print('epoch ',epoch,  ' loss ',loss_epoch, ' time epoch ',time.time()-t0)
             
         if (epoch+1) % eval_every == 0:
-            mse, mae,ssim = evaluate(encoder,test_loader) 
-            scheduler_enc.step(mse)                   
-            torch.save(encoder.state_dict(),'encoder_{}.pth'.format(name))
+            #mse, mae,ssim = evaluate(encoder,validation_loader)
+            mse, mae = evaluate(encoder,validation_loader)
+            scheduler_enc.step(mse)
+        torch.save(encoder.state_dict(),'encoder_{}.pth'.format(name))
     return train_losses
 
     
@@ -130,23 +138,27 @@ def evaluate(encoder,loader):
             predictions =  np.stack(predictions) # (10, batch_size, 1, 64, 64)
             predictions = predictions.swapaxes(0,1)  # (batch_size,10, 1, 64, 64)
 
-            mse_batch = np.mean((predictions-target)**2 , axis=(0,1,2)).sum()
-            mae_batch = np.mean(np.abs(predictions-target) ,  axis=(0,1,2)).sum() 
+            #mse_batch = np.mean((predictions-target)**2 , axis=(0,1,2)).sum()
+            #mae_batch = np.mean(np.abs(predictions-target) ,  axis=(0,1,2)).sum()
+            mse_batch = np.mean((predictions-target)**2)
+            mae_batch = np.mean(np.abs(predictions-target))
             total_mse += mse_batch
             total_mae += mae_batch
             
-            for a in range(0,target.shape[0]):
-                for b in range(0,target.shape[1]):
-                    total_ssim += ssim(target[a,b,0,], predictions[a,b,0,]) / (target.shape[0]*target.shape[1]) 
-
-            
-            cross_entropy = -target*np.log(predictions) - (1-target) * np.log(1-predictions)
-            cross_entropy = cross_entropy.sum()
-            cross_entropy = cross_entropy / (args.batch_size*target_length)
-            total_bce +=  cross_entropy
+            # for a in range(0,target.shape[0]):
+            #     for b in range(0,target.shape[1]):
+            #         total_ssim += ssim(target[a,b,0,], predictions[a,b,0,]) / (target.shape[0]*target.shape[1])
+            #
+            #
+            # cross_entropy = -target*np.log(predictions) - (1-target) * np.log(1-predictions)
+            # cross_entropy = cross_entropy.sum()
+            # cross_entropy = cross_entropy / (args.batch_size*target_length)
+            # total_bce +=  cross_entropy
      
-    print('eval mse ', total_mse/len(loader),  ' eval mae ', total_mae/len(loader),' eval ssim ',total_ssim/len(loader), ' time= ', time.time()-t0)        
-    return total_mse/len(loader),  total_mae/len(loader), total_ssim/len(loader)
+    # print('eval mse ', total_mse/len(loader),  ' eval mae ', total_mae/len(loader),' eval ssim ',total_ssim/len(loader), ' time= ', time.time()-t0)
+    print('eval mse ', total_mse/len(loader),  ' eval mae ', total_mae/len(loader), ' time= ', time.time()-t0)
+    # return total_mse/len(loader),  total_mae/len(loader), total_ssim/len(loader)
+    return total_mse/len(loader),  total_mae/len(loader)
 
 
 phycell  =  PhyCell(input_shape=(16,16), input_dim=64, F_hidden_dims=[49], n_layers=1, kernel_size=(7,7), device=device) 
