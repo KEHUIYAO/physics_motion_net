@@ -278,4 +278,74 @@ class EncoderRNN(torch.nn.Module):
 
         concat = decoded_Dp + decoded_Dr   
         output_image = torch.sigmoid( self.decoder_D(concat ))
-        return out_phys, hidden1, output_image, out_phys, out_conv        
+        return out_phys, hidden1, output_image, out_phys, out_conv
+
+class EncoderDecoderRNN(torch.nn.Module):
+    def __init__(self, encoder_rnn):
+        super(EncoderDecoderRNN, self).__init__()
+        self.encoder_rnn = encoder_rnn
+
+    def forward(self, images, actions, state, image_mask):
+        '''
+
+        :param images: B * T' * C * H * W
+        :param actions: B * T * C
+        :param state: B * C
+        :param image_mask: T
+
+        :return: a list of length T-1, with each element's shape equal to B * C * H * W
+        '''
+        images = images.transpose(0, 1)  # T'*B*C*H*W
+        image_mask = image_mask[0, :]  # since image_mask is (B, T)
+        if actions:  # if actions is not an empty list
+            actions = actions.tranpose(0, 1)
+
+        if image_mask[0] == 0:  # the first time step should not be missing
+            raise(ValueError('the first time step should not be missing'))
+
+        T = len(image_mask)
+        gen_images, gen_states = [], []
+
+        j = 0  # index for the observed image
+        decoding = False
+        for i in range(T-1):
+            if image_mask[i] == 0:
+                # Feed in generated image.
+                image = gen_images[-1]
+                first_timestep = False
+            else:
+                # Always feed in ground_truth
+                image = images[j]
+                if j == 0:
+                    first_timestep = True
+                else:
+                    first_timestep = False
+                j += 1
+
+            _, _, output, _, _  = self.encoder_rnn(image, first_timestep)
+            gen_images.append(output)
+
+        return gen_images
+
+
+if __name__ == '__main__':
+    B = 4
+    T1 = 4
+    T = 6
+    C = 1
+    H = 64
+    W = 64
+
+    images = torch.rand((B, T1, C, H, W))
+    image_mask = torch.tensor([[1, 0, 0, 1, 1, 1]])
+    actions = []
+    state = []
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    phycell  =  PhyCell(input_shape=(16,16), input_dim=64, F_hidden_dims=[49], n_layers=1, kernel_size=(7,7), device=device)
+    convcell =  ConvLSTM(input_shape=(16,16), input_dim=64, hidden_dims=[128,128,64], n_layers=3, kernel_size=(3,3), device=device)
+    encoder  = EncoderRNN(phycell, convcell, device)
+    model = EncoderDecoderRNN(encoder)
+
+    output = model( images, actions, state, image_mask)
+
