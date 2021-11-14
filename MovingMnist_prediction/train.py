@@ -20,8 +20,8 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root', type=str, default='./')
-parser.add_argument('--batch_size', type=int, default=4, help='batch_size')
-parser.add_argument('--nepochs', type=int, default=1, help='nb of epochs')
+parser.add_argument('--batch_size', type=int, default=16, help='batch_size')
+parser.add_argument('--nepochs', type=int, default=20, help='nb of epochs')
 parser.add_argument('--print_every', type=int, default=1, help='')
 parser.add_argument('--eval_every', type=int, default=1, help='')
 parser.add_argument('--save_name', type=str, default='phydnet', help='')
@@ -38,7 +38,7 @@ n_frames = 20
 num_digits = 2
 image_size = 64
 digit_size = 28
-N = 4 # total number of samples including training and validation data
+N = 10000 # total number of samples including training and validation data
 mask = np.array([1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0])
 mm = MovingMNIST(root,
                      n_frames,
