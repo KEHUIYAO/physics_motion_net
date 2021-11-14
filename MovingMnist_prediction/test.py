@@ -9,7 +9,7 @@ import random
 import time
 import sys
 sys.path.insert(1,'../src')
-from models import ConvLSTM,PhyCell, EncoderRNN
+from models import ConvLSTM,PhyCell, EncoderRNN, EncoderDecoderRNN
 from moving_mnist import MovingMNIST
 from constrain_moments import K2M
 # from skimage.measure import compare_ssim as ssim
@@ -30,81 +30,102 @@ args = parser.parse_args()
 
 
 
-mm = MovingMNIST(root=args.root, is_train=False, n_frames_input=10, n_frames_output=10, num_objects=[2])
 
+root = './'
+n_frames = 20
+num_digits = 3
+image_size = 64
+digit_size = 28
+N = 4 # total number of samples including training and validation data
+mask = np.array([1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0])
+mm = MovingMNIST(root,
+                 n_frames,
+                 mask,
+                 num_digits,
+                 image_size,
+                 digit_size,
+                 N,
+                 transform=None,
+                 use_fixed_dataset=False,
+                 )
 
 print("the length of the test set is %d"%len(mm))
 test_loader = torch.utils.data.DataLoader(dataset=mm, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
-constraints = torch.zeros((49,7,7)).to(device)
-ind = 0
-for i in range(0,7):
-    for j in range(0,7):
-        constraints[ind,i,j] = 1
-        ind +=1
+
+def train_on_batch(input_tensor, target_tensor, mask, actions, state, encoder, encoder_optimizer, criterion,teacher_forcing_ratio):
+    # input_tensor : torch.Size([batch_size, input_length, channels, cols, rows])
+    # input_length  = input_tensor.size(1)
+    # target_length = target_tensor.size(1)
+    loss = 0
+    # for ei in range(input_length-1):
+    #     encoder_output, encoder_hidden, output_image,_,_ = encoder(input_tensor[:,ei,:,:,:], (ei==0) )
+    #     loss += criterion(output_image,input_tensor[:,ei+1,:,:,:])
+    #
+    # decoder_input = input_tensor[:,-1,:,:,:] # first decoder input = last image of input sequence
+    #
+    # use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
+    # for di in range(target_length):
+    #     decoder_output, decoder_hidden, output_image,_,_ = encoder(decoder_input)
+    #     target = target_tensor[:,di,:,:,:]
+    #     loss += criterion(output_image,target)
+    #     if use_teacher_forcing:
+    #         decoder_input = target # Teacher forcing
+    #     else:
+    #         decoder_input = output_image
+
+    pred = encoder.forward(input_tensor, actions, state, mask)
+    pred = torch.stack(pred, dim=1)
+    mask = mask[0, :]
+    loss_function = nn.MSELoss()
+    loss = loss_function(pred[:, mask[1:] == 1, ...], target_tensor[:, mask[1:] == 1, ...])
+
+    return loss.item()
 
 
 
 def evaluate(encoder,loader):
-    total_mse, total_mae,total_ssim,total_bce = 0,0,0,0
-    t0 = time.time()
+
     with torch.no_grad():
+        loss_epoch = 0
         for i, out in enumerate(loader, 0):
-            input_tensor = out[1].to(device)
-            target_tensor = out[2].to(device)
-            input_length = input_tensor.size()[1]
-            target_length = target_tensor.size()[1]
+            idx, mask, images_input, actions, state, images_true = out
+            input_tensor = images_input.to(device)
+            target_tensor = images_true.to(device)
+            mask = mask.to(device)
+            #actions = actions.to(device)
+            #state = state.to(device)
 
-            for ei in range(input_length-1):
-                encoder_output, encoder_hidden, _,_,_  = encoder(input_tensor[:,ei,:,:,:], (ei==0))
 
-            decoder_input = input_tensor[:,-1,:,:,:] # first decoder input= last image of input sequence
-            predictions = []
+            pred = encoder.forward(input_tensor, actions, state, mask)
+            pred = torch.stack(pred, dim=1)
+            mask = mask[0, :]
+            loss_function = nn.MSELoss()
+            loss = loss_function(pred[:, mask[1:] == 1, ...], target_tensor[:, mask[1:] == 1, ...])
+            loss_epoch += loss
 
-            for di in range(target_length):
-                decoder_output, decoder_hidden, output_image,_,_ = encoder(decoder_input, False, False)
-                decoder_input = output_image
-                predictions.append(output_image.cpu())
+    loss_epoch = loss_epoch / len(loader)
 
-            true = torch.cat([input_tensor, target_tensor], dim=1)
-            true = true.cpu().numpy()
-            input = input_tensor.cpu().numpy()
-            target = target_tensor.cpu().numpy()
-            predictions =  np.stack(predictions) # (10, batch_size, 1, 64, 64)
-            predictions = predictions.swapaxes(0,1)  # (batch_size,10, 1, 64, 64)
+    print('validation mse is %.4f'%loss_epoch)
 
-            #mse_batch = np.mean((predictions-target)**2 , axis=(0,1,2)).sum()
-            #mae_batch = np.mean(np.abs(predictions-target) ,  axis=(0,1,2)).sum()
-            mse_batch = np.mean((predictions-target)**2)
-            mae_batch = np.mean(np.abs(predictions-target))
-            total_mse += mse_batch
-            total_mae += mae_batch
+    # plot
+    target_tensor = target_tensor.cpu().detach().numpy().squeeze(0).squeeze(1)  # (T-1)xHxW
+    pred = pred.cpu().detach().numpy().squeeze(0).squeeze(1)
+    plot_spatio_temporal_data(target_tensor, save_fig=True, fig_name='true', mask=mask[1:])
+    plot_spatio_temporal_data(pred, save_fig=True, fig_name='pred', mask=mask[1:])
 
-            # for a in range(0,target.shape[0]):
-            #     for b in range(0,target.shape[1]):
-            #         total_ssim += ssim(target[a,b,0,], predictions[a,b,0,]) / (target.shape[0]*target.shape[1])
-            #
-            #
-            # cross_entropy = -target*np.log(predictions) - (1-target) * np.log(1-predictions)
-            # cross_entropy = cross_entropy.sum()
-            # cross_entropy = cross_entropy / (args.batch_size*target_length)
-            # total_bce +=  cross_entropy
+    return loss_epoch
 
-            if i == 4:
-                break
-    plot_spatio_temporal_data(predictions.squeeze(0).squeeze(1), save_fig=True, fig_name='physics_net_pred')
 
-    plot_spatio_temporal_data(true.squeeze(0).squeeze(1), save_fig=True, fig_name='physics_net_true', mask=[1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0])
 
-    # print('eval mse ', total_mse/len(loader),  ' eval mae ', total_mae/len(loader),' eval ssim ',total_ssim/len(loader), ' time= ', time.time()-t0)
-    print('eval mse ', total_mse / (i+1),  ' eval mae ', total_mae / (i+1), ' time= ', time.time()-t0)
-    # return total_mse/len(loader),  total_mae/len(loader), total_ssim/len(loader)
-    return total_mse / (i+1),  total_mae / (i+1)
+
+
 
 
 phycell  =  PhyCell(input_shape=(16,16), input_dim=64, F_hidden_dims=[49], n_layers=1, kernel_size=(7,7), device=device)
 convcell =  ConvLSTM(input_shape=(16,16), input_dim=64, hidden_dims=[128,128,64], n_layers=3, kernel_size=(3,3), device=device)
-encoder  = EncoderRNN(phycell, convcell, device)
+encoder_rnn  = EncoderRNN(phycell, convcell, device)
+encoder = EncoderDecoderRNN(encoder_rnn)
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -116,8 +137,11 @@ print('encoder ' , count_parameters(encoder) )
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 encoder.load_state_dict(torch.load('encoder_phydnet.pth',map_location=torch.device('cpu') ))
+
+# encoder.encoder_rnn.load_state_dict(torch.load('encoder_phydnet.pth',map_location=torch.device('cpu') ))  # use the previous training
+
 encoder.eval()
 #mse, mae,ssim = evaluate(encoder,test_loader)
-mse, mae = evaluate(encoder,test_loader)
+mse = evaluate(encoder,test_loader)
 print('mse is %.4f'%mse)
 

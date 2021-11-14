@@ -39,7 +39,7 @@ num_digits = 2
 image_size = 64
 digit_size = 28
 N = 4 # total number of samples including training and validation data
-mask = np.array([1,1,0,1,1,0,1,1,0,1,1,0,1,1,0,1,1,0,0,0])
+mask = np.array([1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0])
 mm = MovingMNIST(root,
                      n_frames,
                      mask,

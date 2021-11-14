@@ -2,7 +2,7 @@ universe = vanilla
 executable = submit_train.sh
 output = $(Cluster)_$(Process).out
 
-transfer_input_files = environment.yml, train.py, train-images-idx3-ubyte.gz, ../src/models.py, ../src/constrain_moments.py
+transfer_input_files = environment.yml, train.py, moving_mnist.py, train-images-idx3-ubyte.gz, ../src/models.py, ../src/constrain_moments.py,
 should_transfer_files = YES
 when_to_transfer_output = ON_EXIT
 
