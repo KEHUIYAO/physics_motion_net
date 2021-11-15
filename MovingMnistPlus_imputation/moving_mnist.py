@@ -8,7 +8,7 @@ import cv2
 from PIL import Image
 from numpy import asarray
 from numpy.random import RandomState
-from visualization import plot_spatio_temporal_data
+
 #
 # image = np.array(Image.open('true.png'))
 # image = Image.fromarray(image)
@@ -211,7 +211,7 @@ class MovingMNIST:
         return self.length
 
 if __name__ == "__main__":
-
+    from visualization import plot_spatio_temporal_data
     data = MovingMNIST( root='./',
                         n_frames=20,
                         mask=[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
